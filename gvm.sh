@@ -1,19 +1,23 @@
 #!/bin/bash
 
-# Go Version Installer Script
-# Usage: sudo ./gvm.sh <version>
-# Example: sudo ./gvm.sh 1.24.4
+# Go Version Manager
+# Usage: ./gvm.sh <version>
+# Example: ./gvm.sh 1.24.4
 
 set -e
 
-# Color codes for output
+# Color codes
 RED='\033[0;31m'
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
 BLUE='\033[0;34m'
-NC='\033[0m' # No Color
+NC='\033[0m'
 
-# Function to print colored output
+# GVM directories
+GVM_DIR="${HOME}/.gvm"
+VERSIONS_DIR="${GVM_DIR}/versions"
+CURRENT_LINK="${GVM_DIR}/current"
+
 print_info() {
     echo -e "${BLUE}[INFO]${NC} $1"
 }
@@ -34,133 +38,148 @@ print_error() {
 if [ $# -eq 0 ]; then
     print_error "Please provide Go version as argument"
     echo "Usage: $0 <version>"
-    echo "Example: $0 1.24"
+    echo "Example: $0 1.24.4"
     exit 1
 fi
 
 GO_VERSION="$1"
 
-# Validate version format (supports X.Y or X.Y.Z)
+# Validate version format
 if [[ ! "$GO_VERSION" =~ ^[0-9]+\.[0-9]+(\.[0-9]+)?$ ]]; then
-    print_error "Invalid version format. Please use format X.Y or X.Y.Z (e.g., 1.20 or 1.20.5)"
-    echo "Example: $0 1.21.12"
+    print_error "Invalid version format."
+    echo "Use format X.Y or X.Y.Z (e.g., 1.24 or 1.24.4)"
     exit 1
 fi
 
-# If version is in X.Y format, add .0 to make it X.Y.0
+# Convert X.Y to X.Y.0
 if [[ "$GO_VERSION" =~ ^[0-9]+\.[0-9]+$ ]]; then
     GO_VERSION="${GO_VERSION}.0"
-    print_info "Version format adjusted to: $GO_VERSION"
+    print_info "Version format adjusted to: ${GO_VERSION}"
 fi
 
-DOWNLOAD_URL="https://go.dev/dl/go${GO_VERSION}.linux-amd64.tar.gz"
-DOWNLOAD_FILE="go${GO_VERSION}.linux-amd64.tar.gz"
-INSTALL_DIR="/usr/local"
+# Detect operating system
+OS="$(uname -s)"
 
-# Check if the requested version is already installed
-if [ -d "/usr/local/go" ]; then
-    CURRENT_VERSION=$(/usr/local/go/bin/go version 2>/dev/null | grep -oP 'go\K[0-9]+\.[0-9]+(\.[0-9]+)?' || true)
-    
-    if [ "$CURRENT_VERSION" = "$GO_VERSION" ]; then
-        print_success "Go ${GO_VERSION} is already installed at /usr/local/go"
-        print_info "Current Go version: $(/usr/local/go/bin/go version)"
-        exit 0
+case "$OS" in
+    Linux)
+        GO_OS="linux"
+        ;;
+    Darwin)
+        GO_OS="darwin"
+        ;;
+    *)
+        print_error "Unsupported operating system: ${OS}"
+        print_info "Supported operating systems: Linux, macOS"
+        exit 1
+        ;;
+esac
+
+# Detect architecture
+ARCH="$(uname -m)"
+
+case "$ARCH" in
+    x86_64)
+        GO_ARCH="amd64"
+        ;;
+    arm64|aarch64)
+        GO_ARCH="arm64"
+        ;;
+    *)
+        print_error "Unsupported architecture: ${ARCH}"
+        print_info "Supported architectures: amd64, arm64"
+        exit 1
+        ;;
+esac
+
+print_info "Operating system: ${GO_OS}"
+print_info "Architecture: ${GO_ARCH}"
+
+# Paths
+INSTALL_DIR="${VERSIONS_DIR}/${GO_VERSION}"
+DOWNLOAD_FILE="go${GO_VERSION}.${GO_OS}-${GO_ARCH}.tar.gz"
+DOWNLOAD_URL="https://go.dev/dl/${DOWNLOAD_FILE}"
+
+# Create GVM directories
+mkdir -p "${VERSIONS_DIR}"
+
+# Check if requested version is already installed
+if [ -d "${INSTALL_DIR}" ]; then
+    print_info "Go ${GO_VERSION} is already installed."
+else
+    print_info "Go ${GO_VERSION} is not installed."
+    print_info "Download URL: ${DOWNLOAD_URL}"
+
+    # Create temporary directory
+    TEMP_DIR="$(mktemp -d)"
+    DOWNLOAD_PATH="${TEMP_DIR}/${DOWNLOAD_FILE}"
+
+    cleanup() {
+        rm -rf "${TEMP_DIR}"
+    }
+
+    trap cleanup EXIT
+
+    # Download Go
+    print_info "Downloading Go ${GO_VERSION}..."
+
+    if command -v curl >/dev/null 2>&1; then
+        curl -fL --progress-bar -o "${DOWNLOAD_PATH}" "${DOWNLOAD_URL}"
+    elif command -v wget >/dev/null 2>&1; then
+        wget -O "${DOWNLOAD_PATH}" "${DOWNLOAD_URL}"
     else
-        print_warning "Found different Go version (${CURRENT_VERSION:-None}) installed at /usr/local/go"
-        read -p "Do you want to continue with installation of Go ${GO_VERSION}? [y/N] " -n 1 -r
-        echo
-        if [[ ! $REPLY =~ ^[Yy]$ ]]; then
-            print_info "Installation cancelled by user"
-            exit 0
-        fi
+        print_error "Neither curl nor wget is available."
+        exit 1
     fi
+
+    if [ ! -f "${DOWNLOAD_PATH}" ]; then
+        print_error "Download failed."
+        exit 1
+    fi
+
+    print_success "Download completed."
+
+    # Extract into temporary directory
+    EXTRACT_DIR="${TEMP_DIR}/extracted"
+
+    mkdir -p "${EXTRACT_DIR}"
+
+    print_info "Extracting Go ${GO_VERSION}..."
+
+    tar -C "${EXTRACT_DIR}" -xzf "${DOWNLOAD_PATH}"
+
+    if [ ! -d "${EXTRACT_DIR}/go" ]; then
+        print_error "Go extraction failed."
+        exit 1
+    fi
+
+    # Move Go installation into versions directory
+    print_info "Installing Go ${GO_VERSION}..."
+
+    mv "${EXTRACT_DIR}/go" "${INSTALL_DIR}"
+
+    print_success "Go ${GO_VERSION} installed."
 fi
 
-print_info "Starting Go ${GO_VERSION} installation..."
-print_info "Download URL: ${DOWNLOAD_URL}"
+# Switch current version
+print_info "Switching to Go ${GO_VERSION}..."
 
-# Check if running as root or with sudo
-if [ "$EUID" -ne 0 ]; then
-    print_warning "This script requires root privileges to install to /usr/local"
-    print_info "Please run with sudo: sudo $0 $1"
-    exit 1
-fi
+ln -sfn "${INSTALL_DIR}" "${CURRENT_LINK}"
 
-# Create temporary directory for download
-TEMP_DIR=$(mktemp -d)
-DOWNLOAD_PATH="$TEMP_DIR/$DOWNLOAD_FILE"
+print_success "Go ${GO_VERSION} is now active."
 
-# Set up trap to clean up on exit (success or failure)
-cleanup() {
-    print_info "Cleaning up temporary files..."
-    rm -f "$DOWNLOAD_PATH" 2>/dev/null || true
-    rm -rf "$TEMP_DIR" 2>/dev/null || true
-}
-trap cleanup EXIT
-
-cd "$TEMP_DIR"
-print_info "Working in temporary directory: $TEMP_DIR"
-
-# Download Go
-print_info "Downloading Go ${GO_VERSION}..."
-if command -v wget >/dev/null 2>&1; then
-    wget -O "$DOWNLOAD_FILE" "$DOWNLOAD_URL"
-elif command -v curl >/dev/null 2>&1; then
-    curl -L -o "$DOWNLOAD_FILE" "$DOWNLOAD_URL"
+# Verify
+if [ -x "${CURRENT_LINK}/bin/go" ]; then
+    INSTALLED_VERSION="$("${CURRENT_LINK}/bin/go" version)"
+    print_success "${INSTALLED_VERSION}"
 else
-    print_error "Neither wget nor curl is available. Please install one of them."
+    print_error "Go installation verification failed."
     exit 1
 fi
 
-# Verify download
-if [ ! -f "$DOWNLOAD_FILE" ]; then
-    print_error "Download failed. File not found."
-    exit 1
-fi
-
-print_success "Download completed"
-
-# Remove any existing Go installation
-print_info "Removing any existing Go installation..."
-rm -rf /usr/local/go 2>/dev/null || true
-print_success "Old Go installation removed (if any existed)"
-
-# Extract to /usr/local
-print_info "Extracting Go to ${INSTALL_DIR}..."
-tar -C /usr/local -xzf "$DOWNLOAD_FILE"
-print_success "Go extracted successfully"
-
-# Delete the tar file
-print_info "Deleting downloaded tar file..."
-rm -f "$DOWNLOAD_FILE"
-print_success "Tar file deleted"
-
-# Set proper permissions
-chmod -R 755 /usr/local/go
-print_success "Permissions set"
-
-# Clean up temporary directory
-cd /
-rm -rf "$TEMP_DIR"
-print_success "Temporary files cleaned up"
-
-# Check if Go is in PATH
-print_info "Checking Go installation..."
-if /usr/local/go/bin/go version >/dev/null 2>&1; then
-    INSTALLED_VERSION=$(/usr/local/go/bin/go version)
-    print_success "Go installed successfully: $INSTALLED_VERSION"
-else
-    print_error "Go installation verification failed"
-    exit 1
-fi
-
-# PATH setup reminder
 echo
-print_info "Installation complete!"
-print_warning "Make sure to add Go to your PATH if not already done:"
-echo "export PATH=\$PATH:/usr/local/go/bin"
+print_info "Make sure this is in your PATH:"
 echo
-print_info "Add the above line to your ~/.bashrc or ~/.profile"
-print_info "Then run: source ~/.bashrc"
+echo 'export PATH="$HOME/.gvm/current/bin:$PATH"'
 echo
-print_info "Verify installation with: go version"
+print_info "Then run:"
+echo "go version"
