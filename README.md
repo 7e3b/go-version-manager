@@ -170,3 +170,7 @@ GVM currently supports:
 * Linux ARM64
 * macOS AMD64
 * macOS ARM64
+
+## License
+
+See [LICENSE](LICENSE).
