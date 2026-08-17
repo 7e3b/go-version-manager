@@ -5,7 +5,7 @@ A simple, lightweight shell script to install and switch between multiple Go ver
 ## Installation
 
 ```bash
-curl -O https://raw.githubusercontent.com/7e3b/go-version-manager/main/gvm.sh
+curl -O https://raw.githubusercontent.com/7e3b/shell-go-version-manager/main/gvm.sh
 chmod +x gvm.sh
 sudo cp gvm.sh /usr/local/bin/gvm
 ```
